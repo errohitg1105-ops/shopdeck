@@ -25,18 +25,22 @@ import {
   AlertCircle,
   ShieldCheck,
   UserCheck2,
-  ArrowRight
+  ArrowRight,
+  Sparkles,
+  Zap,
+  Target
 } from 'lucide-react';
 
 export default function App() {
   const [records, setRecords] = useState(initialRecords);
-  const [dataSource, setDataSource] = useState('local'); // 'local' or 'supabase'
+  const [dataSource, setDataSource] = useState('local');
   const [supabaseTotal, setSupabaseTotal] = useState(18749);
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedSegment, setSelectedSegment] = useState('');
   const [selectedGC, setSelectedGC] = useState('');
   const [selectedGM, setSelectedGM] = useState('');
   const [selectedGL, setSelectedGL] = useState('');
@@ -76,6 +80,23 @@ export default function App() {
   };
 
   // Dropdown list options
+  const segments = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.business_segment) set.add(r.business_segment.trim());
+    });
+    // Order: HITS, PARTNER HIT, REVENUE, SELF SERVE, then others
+    const priority = ['HITS', 'PARTNER HIT', 'REVENUE', 'SELF SERVE', 'ONBOARDING', 'DEACTIVATED'];
+    return Array.from(set).sort((a, b) => {
+      const idxA = priority.indexOf(a);
+      const idxB = priority.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [records]);
+
   const gcs = useMemo(() => {
     const set = new Set();
     records.forEach(r => {
@@ -123,12 +144,14 @@ export default function App() {
         !searchTerm ||
         (item.seller_name && item.seller_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.seller_id && item.seller_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.business_segment && item.business_segment.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.gc_name && item.gc_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.gm_name && item.gm_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.gl_name && item.gl_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.kam_name && item.kam_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.hit_status && item.hit_status.toLowerCase().includes(searchTerm.toLowerCase()));
 
+      const matchSegment = !selectedSegment || item.business_segment === selectedSegment;
       const matchGC = !selectedGC || item.gc_name === selectedGC;
       const matchGM = !selectedGM || item.gm_name === selectedGM;
       const matchGL = !selectedGL || item.gl_name === selectedGL;
@@ -139,14 +162,26 @@ export default function App() {
         (selectedGoLive === 'yes' && (item.go_live_sellers === 'Yes' || item.go_live_sellers === '1' || item.go_live_sellers === 1)) ||
         (selectedGoLive === 'no' && item.go_live_sellers !== 'Yes' && item.go_live_sellers !== '1' && item.go_live_sellers !== 1);
 
-      return matchSearch && matchGC && matchGM && matchGL && matchKAM && matchHitStatus && matchGoLive;
+      return matchSearch && matchSegment && matchGC && matchGM && matchGL && matchKAM && matchHitStatus && matchGoLive;
     });
-  }, [records, searchTerm, selectedGC, selectedGM, selectedGL, selectedKAM, selectedHitStatus, selectedGoLive]);
+  }, [records, searchTerm, selectedSegment, selectedGC, selectedGM, selectedGL, selectedKAM, selectedHitStatus, selectedGoLive]);
 
   // Overall Statistics
   const stats = useMemo(() => {
     const totalSellers = records.length;
     const liveSellers = records.filter(r => r.go_live_sellers === 'Yes' || r.go_live_sellers === 1 || r.go_live_sellers === '1').length;
+    
+    // Segment breakdown
+    const segmentCounts = {};
+    const segmentLiveCounts = {};
+    records.forEach(r => {
+      const seg = r.business_segment || 'UNCLASSIFIED';
+      segmentCounts[seg] = (segmentCounts[seg] || 0) + 1;
+      if (r.go_live_sellers === 'Yes' || r.go_live_sellers === 1 || r.go_live_sellers === '1') {
+        segmentLiveCounts[seg] = (segmentLiveCounts[seg] || 0) + 1;
+      }
+    });
+
     const uniqueGCs = gcs.length;
     const uniqueGMs = gms.length;
     const uniqueGLs = gls.length;
@@ -195,6 +230,8 @@ export default function App() {
       totalSellers,
       liveSellers,
       liveRate,
+      segmentCounts,
+      segmentLiveCounts,
       uniqueGCs,
       uniqueGMs,
       uniqueGLs,
@@ -213,11 +250,13 @@ export default function App() {
     return filteredRecords.slice(start, start + pageSize);
   }, [filteredRecords, currentPage, pageSize]);
 
-  // Export CSV with full Question 7753 fields
+  // Export CSV with full Question 7753 + Business Segment fields
   const exportToCSV = () => {
     const headers = [
       "Seller ID",
       "Seller Name",
+      "Business Segment",
+      "Account Status",
       "Hit Status",
       "Go-Live Status",
       "Growth Consultant (GC)",
@@ -234,6 +273,8 @@ export default function App() {
     const rows = filteredRecords.map(r => [
       `"${r.seller_id || ''}"`,
       `"${(r.seller_name || '').replace(/"/g, '""')}"`,
+      `"${r.business_segment || ''}"`,
+      `"${r.seller_account_status || ''}"`,
       `"${r.hit_status || ''}"`,
       `"${r.go_live_sellers || 'No'}"`,
       `"${(r.gc_name || '').replace(/"/g, '""')}"`,
@@ -251,7 +292,7 @@ export default function App() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `shopdeck_seller_manager_mapping_q7753_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `shopdeck_seller_manager_segments_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -277,6 +318,123 @@ export default function App() {
 
   const isLive = (val) => val === 'Yes' || val === 1 || val === '1';
 
+  // Badge renderer for business segment
+  const renderSegmentBadge = (segment) => {
+    switch (segment) {
+      case 'PARTNER HIT':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(217, 70, 239, 0.18)',
+              color: '#f0abfc',
+              border: '1px solid rgba(217, 70, 239, 0.4)',
+              fontSize: '11px',
+              padding: '2px 8px',
+              fontWeight: 600
+            }}
+          >
+            <Sparkles size={11} style={{ marginRight: '3px', verticalAlign: 'middle' }} />
+            PARTNER HIT
+          </span>
+        );
+      case 'HITS':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(99, 102, 241, 0.18)',
+              color: '#a5b4fc',
+              border: '1px solid rgba(99, 102, 241, 0.35)',
+              fontSize: '11px',
+              padding: '2px 8px',
+              fontWeight: 600
+            }}
+          >
+            <Zap size={11} style={{ marginRight: '3px', verticalAlign: 'middle' }} />
+            HITS
+          </span>
+        );
+      case 'REVENUE':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(16, 185, 129, 0.18)',
+              color: '#6ee7b7',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              fontSize: '11px',
+              padding: '2px 8px',
+              fontWeight: 600
+            }}
+          >
+            <TrendingUp size={11} style={{ marginRight: '3px', verticalAlign: 'middle' }} />
+            REVENUE
+          </span>
+        );
+      case 'SELF SERVE':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(245, 158, 11, 0.18)',
+              color: '#fde047',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              fontSize: '11px',
+              padding: '2px 8px',
+              fontWeight: 600
+            }}
+          >
+            SELF SERVE
+          </span>
+        );
+      case 'DEACTIVATED':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(148, 163, 184, 0.12)',
+              color: '#94a3b8',
+              border: '1px solid rgba(148, 163, 184, 0.25)',
+              fontSize: '11px',
+              padding: '2px 8px'
+            }}
+          >
+            DEACTIVATED
+          </span>
+        );
+      case 'ONBOARDING':
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(56, 189, 248, 0.15)',
+              color: '#7dd3fc',
+              border: '1px solid rgba(56, 189, 248, 0.3)',
+              fontSize: '11px',
+              padding: '2px 8px'
+            }}
+          >
+            ONBOARDING
+          </span>
+        );
+      default:
+        return (
+          <span
+            className="badge"
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              color: '#cbd5e1',
+              fontSize: '11px',
+              padding: '2px 8px'
+            }}
+          >
+            {segment || '—'}
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="app-container">
       {/* Header */}
@@ -288,7 +446,7 @@ export default function App() {
           <div>
             <h1 className="brand-title">Shopdeck Intelligence</h1>
             <p className="brand-subtitle">
-              <span>Seller-Manager Mapping Dashboard</span>
+              <span>Seller-Manager Mapping & Segment Classification</span>
               <span style={{ opacity: 0.5 }}>•</span>
               <a
                 href="https://metabase.kaip.in/question/7753-seller-manager-mapping"
@@ -307,7 +465,7 @@ export default function App() {
           <div className="badge badge-metabase">
             <Database size={13} />
             <span className="pulse-dot"></span>
-            <span>Metabase Q7753 Live</span>
+            <span>Metabase Q7753 Enriched</span>
           </div>
 
           <div className="badge badge-supabase">
@@ -335,52 +493,68 @@ export default function App() {
         </div>
       </header>
 
-      {/* KPI Cards */}
-      <section className="stats-grid">
-        <div className="stat-card">
+      {/* KPI Cards: Segmentation Breakdown */}
+      <section className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div className="stat-card" style={{ borderLeft: '4px solid #6366f1' }}>
           <div className="stat-header">
-            <span className="stat-label">Total Mapped Sellers</span>
+            <span className="stat-label">HITS Segment</span>
             <div className="stat-icon-wrapper" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
-              <Users size={18} />
+              <Zap size={18} />
             </div>
           </div>
-          <div className="stat-value">{stats.totalSellers.toLocaleString()}</div>
-          <div className="stat-subtext">Active sellers mapped in Metabase Q7753</div>
+          <div className="stat-value">{(stats.segmentCounts['HITS'] || 0).toLocaleString()}</div>
+          <div className="stat-subtext">
+            <span style={{ color: '#34d399' }}>{(stats.segmentLiveCounts['HITS'] || 0).toLocaleString()} Live</span>
+            {' • '}Core managed portfolio
+          </div>
         </div>
 
-        <div className="stat-card">
+        <div className="stat-card" style={{ borderLeft: '4px solid #d946ef' }}>
           <div className="stat-header">
-            <span className="stat-label">Go-Live Sellers</span>
+            <span className="stat-label">PARTNER HIT</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(217, 70, 239, 0.18)', color: '#e879f9' }}>
+              <Sparkles size={18} />
+            </div>
+          </div>
+          <div className="stat-value" style={{ color: '#f0abfc' }}>
+            {(stats.segmentCounts['PARTNER HIT'] || 0).toLocaleString()}
+          </div>
+          <div className="stat-subtext">
+            <span style={{ color: '#34d399' }}>100% Go-Live</span>
+            {' • '}Strategic partner accounts
+          </div>
+        </div>
+
+        <div className="stat-card" style={{ borderLeft: '4px solid #10b981' }}>
+          <div className="stat-header">
+            <span className="stat-label">REVENUE Segment</span>
             <div className="stat-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
-              <CheckCircle2 size={18} />
+              <TrendingUp size={18} />
             </div>
           </div>
           <div className="stat-value" style={{ color: '#34d399' }}>
-            {stats.liveSellers.toLocaleString()}
+            {(stats.segmentCounts['REVENUE'] || 0).toLocaleString()}
           </div>
-          <div className="stat-subtext">{stats.liveRate}% portfolio conversion rate</div>
+          <div className="stat-subtext">
+            <span style={{ color: '#34d399' }}>{(stats.segmentLiveCounts['REVENUE'] || 0).toLocaleString()} Live</span>
+            {' • '}Key Accounts tier
+          </div>
         </div>
 
-        <div className="stat-card">
+        <div className="stat-card" style={{ borderLeft: '4px solid #f59e0b' }}>
           <div className="stat-header">
-            <span className="stat-label">Growth Consultants (GC)</span>
-            <div className="stat-icon-wrapper" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
-              <UserCheck size={18} />
+            <span className="stat-label">SELF SERVE</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+              <Users size={18} />
             </div>
           </div>
-          <div className="stat-value">{stats.uniqueGCs}</div>
-          <div className="stat-subtext">Avg {stats.avgPerGc} sellers per consultant</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-header">
-            <span className="stat-label">Leadership Pods</span>
-            <div className="stat-icon-wrapper" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#a78bfa' }}>
-              <Briefcase size={18} />
-            </div>
+          <div className="stat-value" style={{ color: '#fbbf24' }}>
+            {(stats.segmentCounts['SELF SERVE'] || 0).toLocaleString()}
           </div>
-          <div className="stat-value">{stats.uniqueGMs} GMs</div>
-          <div className="stat-subtext">{stats.uniqueGLs} GLs & {stats.uniqueKAMs} Key Account Managers</div>
+          <div className="stat-subtext">
+            <span style={{ color: '#34d399' }}>{(stats.segmentLiveCounts['SELF SERVE'] || 0).toLocaleString()} Live</span>
+            {' • '}Automated ads accounts
+          </div>
         </div>
       </section>
 
@@ -470,6 +644,101 @@ export default function App() {
 
       {/* Main Filter & Data Table */}
       <section className="panel" style={{ padding: '20px' }}>
+        {/* Segment Quick Filter Pills */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--border-subtle)' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-dim)', marginRight: '6px' }}>
+            BUSINESS SEGMENT:
+          </span>
+          <button
+            className={`pill-btn ${!selectedSegment ? 'active' : ''}`}
+            onClick={() => {
+              setSelectedSegment('');
+              setCurrentPage(1);
+            }}
+          >
+            All Segments ({records.length.toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'HITS' ? 'active' : ''}`}
+            style={{
+              borderColor: selectedSegment === 'HITS' ? '#6366f1' : undefined,
+              color: selectedSegment === 'HITS' ? '#a5b4fc' : undefined
+            }}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'HITS' ? '' : 'HITS');
+              setCurrentPage(1);
+            }}
+          >
+            HITS ({(stats.segmentCounts['HITS'] || 0).toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'PARTNER HIT' ? 'active' : ''}`}
+            style={{
+              borderColor: selectedSegment === 'PARTNER HIT' ? '#d946ef' : undefined,
+              color: selectedSegment === 'PARTNER HIT' ? '#f0abfc' : undefined,
+              background: selectedSegment === 'PARTNER HIT' ? 'rgba(217, 70, 239, 0.2)' : undefined
+            }}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'PARTNER HIT' ? '' : 'PARTNER HIT');
+              setCurrentPage(1);
+            }}
+          >
+            <Sparkles size={11} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+            PARTNER HIT ({(stats.segmentCounts['PARTNER HIT'] || 0).toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'REVENUE' ? 'active' : ''}`}
+            style={{
+              borderColor: selectedSegment === 'REVENUE' ? '#10b981' : undefined,
+              color: selectedSegment === 'REVENUE' ? '#6ee7b7' : undefined
+            }}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'REVENUE' ? '' : 'REVENUE');
+              setCurrentPage(1);
+            }}
+          >
+            REVENUE ({(stats.segmentCounts['REVENUE'] || 0).toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'SELF SERVE' ? 'active' : ''}`}
+            style={{
+              borderColor: selectedSegment === 'SELF SERVE' ? '#f59e0b' : undefined,
+              color: selectedSegment === 'SELF SERVE' ? '#fde047' : undefined
+            }}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'SELF SERVE' ? '' : 'SELF SERVE');
+              setCurrentPage(1);
+            }}
+          >
+            SELF SERVE ({(stats.segmentCounts['SELF SERVE'] || 0).toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'ONBOARDING' ? 'active' : ''}`}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'ONBOARDING' ? '' : 'ONBOARDING');
+              setCurrentPage(1);
+            }}
+          >
+            ONBOARDING ({(stats.segmentCounts['ONBOARDING'] || 0).toLocaleString()})
+          </button>
+
+          <button
+            className={`pill-btn ${selectedSegment === 'DEACTIVATED' ? 'active' : ''}`}
+            onClick={() => {
+              setSelectedSegment(selectedSegment === 'DEACTIVATED' ? '' : 'DEACTIVATED');
+              setCurrentPage(1);
+            }}
+          >
+            DEACTIVATED ({(stats.segmentCounts['DEACTIVATED'] || 0).toLocaleString()})
+          </button>
+        </div>
+
+        {/* Search & Dropdown Filters */}
         <div className="filter-bar">
           <div className="search-input-wrapper">
             <Search size={16} className="search-icon" />
@@ -484,6 +753,18 @@ export default function App() {
               }}
             />
           </div>
+
+          <select
+            className="select-filter"
+            value={selectedSegment}
+            onChange={(e) => {
+              setSelectedSegment(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Business Segments</option>
+            {segments.map(seg => <option key={seg} value={seg}>{seg}</option>)}
+          </select>
 
           <select
             className="select-filter"
@@ -535,18 +816,6 @@ export default function App() {
 
           <select
             className="select-filter"
-            value={selectedHitStatus}
-            onChange={(e) => {
-              setSelectedHitStatus(e.target.value);
-              setCurrentPage(1);
-            }}
-          >
-            <option value="">All Hit Statuses</option>
-            {hitStatuses.map(st => <option key={st} value={st}>{st}</option>)}
-          </select>
-
-          <select
-            className="select-filter"
             value={selectedGoLive}
             onChange={(e) => {
               setSelectedGoLive(e.target.value);
@@ -558,10 +827,11 @@ export default function App() {
             <option value="no">Pending Go-Live (No)</option>
           </select>
 
-          {(searchTerm || selectedGC || selectedGM || selectedGL || selectedKAM || selectedHitStatus || selectedGoLive) && (
+          {(searchTerm || selectedSegment || selectedGC || selectedGM || selectedGL || selectedKAM || selectedHitStatus || selectedGoLive) && (
             <button
               onClick={() => {
                 setSearchTerm('');
+                setSelectedSegment('');
                 setSelectedGC('');
                 setSelectedGM('');
                 setSelectedGL('');
@@ -607,7 +877,7 @@ export default function App() {
               <tr>
                 <th>Seller Account</th>
                 <th>Seller ID</th>
-                <th>Hit Status</th>
+                <th>Business Segment</th>
                 <th>Go-Live</th>
                 <th>Growth Consultant (GC)</th>
                 <th>Growth Lead / Manager</th>
@@ -629,7 +899,7 @@ export default function App() {
                     <tr key={`${item.seller_id}-${idx}`}>
                       <td>
                         <div className="seller-name">
-                          <Building2 size={16} color={live ? '#34d399' : '#818cf8'} />
+                          <Building2 size={16} color={item.business_segment === 'PARTNER HIT' ? '#e879f9' : (live ? '#34d399' : '#818cf8')} />
                           <span title={item.seller_name}>{item.seller_name || 'Unnamed Seller'}</span>
                         </div>
                       </td>
@@ -652,21 +922,7 @@ export default function App() {
                       </td>
 
                       <td>
-                        {item.hit_status ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: item.hit_status === 'STANDARD' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                              color: item.hit_status === 'STANDARD' ? '#818cf8' : '#fbbf24',
-                              fontSize: '11px',
-                              padding: '2px 8px'
-                            }}
-                          >
-                            {item.hit_status}
-                          </span>
-                        ) : (
-                          <span style={{ color: 'var(--text-dim)' }}>—</span>
-                        )}
+                        {renderSegmentBadge(item.business_segment)}
                       </td>
 
                       <td>
@@ -844,6 +1100,9 @@ export default function App() {
                           <td style={{ padding: '8px 12px', fontWeight: 600, color: '#ffffff' }}>
                             {s.seller_name || 'Unnamed'}
                           </td>
+                          <td style={{ padding: '8px 12px' }}>
+                            {renderSegmentBadge(s.business_segment)}
+                          </td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
                             {s.seller_id}
                           </td>
@@ -872,7 +1131,7 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#ffffff' }}>
-                  Metabase Question #7753 SQL Architecture
+                  Metabase Question #7753 & Segment SQL Architecture
                 </h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                   https://metabase.kaip.in/question/7753-seller-manager-mapping
@@ -885,37 +1144,48 @@ export default function App() {
 
             <div className="modal-body" style={{ fontSize: '13px', color: '#cbd5e1' }}>
               <p style={{ marginBottom: '12px' }}>
-                This data is extracted directly from <b>Metabase Card #7753</b> querying the warehouse table <code style={{ color: '#38bdf8' }}>blitzscale-prod-project.analytics.seller_console_metrics_summary</code>:
+                Optimized SQL query with explicit <b>PARTNER HIT</b> status separation:
               </p>
 
               <div style={{ background: '#020617', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', overflowX: 'auto', marginBottom: '16px' }}>
                 {`SELECT DISTINCT
-  seller_id,
-  company_name AS seller_name,
-  hit_status,
-  go_live_sellers,
-  gc_id AS growth_consultant_id,
-  gc_name,
-  gl_id AS growth_lead_id,
-  gl_name,
-  gm_id AS growth_manager_id,
-  gm_name,
-  kam_id AS key_account_manager_id,
-  kam_name,
-  assistant_manager_name,
-  am_name,
-  golive_poc_name,
-  onboarding_poc_name,
-  key_account_executive_name
-FROM \`blitzscale-prod-project.analytics.seller_console_metrics_summary\`
-ORDER BY seller_id;`}
+  c.seller_id,
+  COALESCE(c.company_name, '') AS seller_name,
+  CASE 
+    WHEN LOWER(c.seller_account_status) = 'hit' THEN 'HITS'
+    WHEN LOWER(c.seller_account_status) = 'partner-hit' THEN 'PARTNER HIT'
+    WHEN LOWER(c.seller_account_status) = 'revenue' THEN 'REVENUE'
+    WHEN LOWER(c.seller_account_status) = 'self-serve' THEN 'SELF SERVE'
+    WHEN LOWER(c.seller_account_status) = 'deactivated' THEN 'DEACTIVATED'
+    WHEN LOWER(c.seller_account_status) = 'onboarding' THEN 'ONBOARDING'
+    WHEN LOWER(c.seller_account_status) = 'pre-onboarding' THEN 'PRE-ONBOARDING'
+    ELSE UPPER(COALESCE(c.seller_account_status, 'UNCLASSIFIED'))
+  END AS business_segment,
+  c.seller_account_status,
+  c.go_live_sellers,
+  c.gc_id,
+  c.gc_name,
+  c.gl_id,
+  c.gl_name,
+  c.gm_id,
+  c.gm_name,
+  c.kam_id,
+  c.kam_name,
+  c.assistant_manager_name,
+  c.am_name,
+  c.golive_poc_name,
+  c.onboarding_poc_name
+FROM \`blitzscale-prod-project.analytics.seller_console_metrics_summary\` c
+ORDER BY business_segment, gc_name, seller_name;`}
               </div>
 
-              <h4 style={{ fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>Sync & Optimizations:</h4>
+              <h4 style={{ fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>Segment Distribution:</h4>
               <ul style={{ paddingLeft: '20px', lineHeight: 1.8 }}>
-                <li><b>Total Records:</b> 18,749 unique seller accounts extracted.</li>
-                <li><b>Database Mirror:</b> Synchronized directly to Supabase Cloud PostgreSQL table <code style={{ color: '#a78bfa' }}>hits_gc_seller_mapping</code>.</li>
-                <li><b>Sub-second Performance:</b> Pre-indexed on <code style={{ color: '#a78bfa' }}>gc_name</code>, <code style={{ color: '#a78bfa' }}>seller_id</code>, and <code style={{ color: '#a78bfa' }}>hit_status</code> for instant filtering.</li>
+                <li><b>HITS:</b> 11,375 managed sellers</li>
+                <li><b style={{ color: '#f0abfc' }}>PARTNER HIT:</b> 129 partner sellers (100% Go-Live)</li>
+                <li><b style={{ color: '#34d399' }}>REVENUE:</b> 2,214 Key Account sellers</li>
+                <li><b style={{ color: '#fbbf24' }}>SELF SERVE:</b> 1,574 self-serve advertising accounts</li>
+                <li><b>DEACTIVATED / ONBOARDING:</b> 3,457 accounts</li>
               </ul>
             </div>
           </div>
