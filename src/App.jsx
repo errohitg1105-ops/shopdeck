@@ -1,0 +1,729 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import initialRecords from './data/hits_gc_sellers.json';
+import { fetchMappingsFromSupabase } from './services/supabase.js';
+import {
+  Users,
+  UserCheck,
+  Briefcase,
+  Layers,
+  Search,
+  Filter,
+  Download,
+  RefreshCw,
+  Copy,
+  Check,
+  ExternalLink,
+  Info,
+  Database,
+  Cloud,
+  X,
+  Mail,
+  Building2,
+  TrendingUp,
+  MessageCircle
+} from 'lucide-react';
+
+export default function App() {
+  const [records, setRecords] = useState(initialRecords);
+  const [dataSource, setDataSource] = useState('local'); // 'local' or 'supabase'
+  const [loading, setLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+
+  // Filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedGC, setSelectedGC] = useState('');
+  const [selectedGM, setSelectedGM] = useState('');
+  const [selectedKAM, setSelectedKAM] = useState('');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
+  // Modals
+  const [selectedGCDetails, setSelectedGCDetails] = useState(null);
+  const [showSqlModal, setShowSqlModal] = useState(false);
+
+  // Fetch live from Supabase on mount
+  useEffect(() => {
+    async function loadLive() {
+      setLoading(true);
+      const res = await fetchMappingsFromSupabase();
+      if (res.data && res.data.length > 0) {
+        setRecords(res.data);
+        setDataSource('supabase');
+      }
+      setLoading(false);
+    }
+    loadLive();
+  }, []);
+
+  const handleCopy = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Unique Lists for Dropdowns
+  const gcs = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.gc_name && r.gc_name !== 'Unassigned') set.add(r.gc_name.trim());
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  const gms = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.gm_name && r.gm_name.trim()) set.add(r.gm_name.trim());
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  const kams = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.kam_name && r.kam_name.trim() && r.kam_name !== '#N/A') set.add(r.kam_name.trim());
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  // Filtered Records
+  const filteredRecords = useMemo(() => {
+    return records.filter(item => {
+      const matchSearch =
+        !searchTerm ||
+        (item.seller_name && item.seller_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.seller_id && item.seller_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.gc_name && item.gc_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.gm_name && item.gm_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.group_id && item.group_id.toLowerCase().includes(searchTerm.toLowerCase()));
+
+      const matchGC = !selectedGC || item.gc_name === selectedGC;
+      const matchGM = !selectedGM || item.gm_name === selectedGM;
+      const matchKAM = !selectedKAM || item.kam_name === selectedKAM;
+
+      return matchSearch && matchGC && matchGM && matchKAM;
+    });
+  }, [records, searchTerm, selectedGC, selectedGM, selectedKAM]);
+
+  // Overall Statistics
+  const stats = useMemo(() => {
+    const uniqueSellers = new Set(records.map(r => r.seller_id).filter(Boolean)).size;
+    const uniqueGCs = gcs.length;
+    const uniqueGMs = gms.length;
+    const uniqueKAMs = kams.length;
+
+    // Workload breakdown per GC
+    const gcCounts = {};
+    records.forEach(r => {
+      const name = r.gc_name || 'Unassigned';
+      if (name !== 'Unassigned') {
+        gcCounts[name] = (gcCounts[name] || 0) + 1;
+      }
+    });
+
+    const sortedGCs = Object.entries(gcCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const maxCount = sortedGCs.length > 0 ? sortedGCs[0].count : 1;
+    const avgPerGc = uniqueGCs > 0 ? Math.round(uniqueSellers / uniqueGCs) : 0;
+
+    // GM breakdown
+    const gmCounts = {};
+    records.forEach(r => {
+      const gm = r.gm_name || 'Direct';
+      gmCounts[gm] = (gmCounts[gm] || 0) + 1;
+    });
+
+    const sortedGMs = Object.entries(gmCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      uniqueSellers,
+      uniqueGCs,
+      uniqueGMs,
+      uniqueKAMs,
+      avgPerGc,
+      topGC: sortedGCs[0] || { name: 'N/A', count: 0 },
+      topGCs: sortedGCs.slice(0, 8),
+      sortedGMs: sortedGMs.slice(0, 6),
+      maxCount
+    };
+  }, [records, gcs, gms, kams]);
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredRecords.length / pageSize) || 1;
+  const paginatedRecords = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRecords.slice(start, start + pageSize);
+  }, [filteredRecords, currentPage, pageSize]);
+
+  // Export to CSV
+  const exportToCSV = () => {
+    const headers = ["Seller ID", "Seller Name", "GC Name", "GC Email", "GM Name", "KAM Name", "Group ID"];
+    const rows = filteredRecords.map(r => [
+      `"${r.seller_id || ''}"`,
+      `"${(r.seller_name || '').replace(/"/g, '""')}"`,
+      `"${(r.gc_name || '').replace(/"/g, '""')}"`,
+      `"${r.gc_email || ''}"`,
+      `"${r.gm_name || ''}"`,
+      `"${r.kam_name || ''}"`,
+      `"${r.group_id || ''}"`
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `shopdeck_gc_sellers_mapping_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Open GC Details
+  const inspectGC = (gcName) => {
+    if (!gcName || gcName === 'Unassigned') return;
+    const mapped = records.filter(r => r.gc_name === gcName);
+    const sample = mapped[0] || {};
+    setSelectedGCDetails({
+      name: gcName,
+      email: sample.gc_email || 'Not listed',
+      gm_name: sample.gm_name || 'Not assigned',
+      kam_name: sample.kam_name || 'Not assigned',
+      sellers: mapped
+    });
+  };
+
+  return (
+    <div className="app-container">
+      {/* Header */}
+      <header className="header">
+        <div className="brand-section">
+          <div className="brand-logo">
+            <Building2 size={24} />
+          </div>
+          <div>
+            <h1 className="brand-title">Shopdeck Intelligence</h1>
+            <p className="brand-subtitle">
+              <span>Growth Consultant (GC) & Seller Mapping Hub</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="header-badges">
+          <div className="badge badge-metabase">
+            <Database size={13} />
+            <span className="pulse-dot"></span>
+            <span>Metabase Hits Synced</span>
+          </div>
+
+          <div className="badge badge-supabase">
+            <Cloud size={13} />
+            <span>Supabase Cloud {dataSource === 'supabase' ? 'Live' : 'Cached'}</span>
+          </div>
+
+          <button
+            onClick={() => setShowSqlModal(true)}
+            className="btn btn-outline"
+            style={{ padding: '6px 12px', fontSize: '12px' }}
+          >
+            <Info size={14} />
+            <span>Optimized SQL</span>
+          </button>
+
+          <button
+            onClick={exportToCSV}
+            className="btn btn-outline"
+            style={{ padding: '6px 12px', fontSize: '12px' }}
+          >
+            <Download size={14} />
+            <span>Export CSV</span>
+          </button>
+        </div>
+      </header>
+
+      {/* KPI Cards */}
+      <section className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-header">
+            <span className="stat-label">Mapped Sellers</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
+              <Users size={18} />
+            </div>
+          </div>
+          <div className="stat-value">{stats.uniqueSellers}</div>
+          <div className="stat-subtext">Active mapped seller accounts in hits</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-header">
+            <span className="stat-label">Growth Consultants</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+              <UserCheck size={18} />
+            </div>
+          </div>
+          <div className="stat-value">{stats.uniqueGCs}</div>
+          <div className="stat-subtext">Active portfolio managers</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-header">
+            <span className="stat-label">Avg Sellers / GC</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+              <TrendingUp size={18} />
+            </div>
+          </div>
+          <div className="stat-value">{stats.avgPerGc}</div>
+          <div className="stat-subtext">Balanced capacity ratio</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-header">
+            <span className="stat-label">Growth Managers</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#a78bfa' }}>
+              <Briefcase size={18} />
+            </div>
+          </div>
+          <div className="stat-value">{stats.uniqueGMs}</div>
+          <div className="stat-subtext">Across {stats.uniqueKAMs} KAM pods</div>
+        </div>
+      </section>
+
+      {/* Visual Analytics Grid */}
+      <section className="analytics-grid">
+        {/* Left: Top GCs Workload Distribution */}
+        <div className="panel">
+          <div className="panel-title">
+            <span>Top Growth Consultants by Seller Allocation</span>
+            <span style={{ fontSize: '13px', color: 'var(--text-dim)', fontWeight: 400 }}>
+              Click any GC to filter
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+            {stats.topGCs.map((gc) => {
+              const pct = Math.round((gc.count / stats.maxCount) * 100);
+              const isSelected = selectedGC === gc.name;
+              return (
+                <div
+                  key={gc.name}
+                  className="gc-workload-item"
+                  style={{
+                    border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                    background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(15, 23, 42, 0.5)'
+                  }}
+                  onClick={() => setSelectedGC(selectedGC === gc.name ? '' : gc.name)}
+                >
+                  <div className="gc-workload-header">
+                    <span className="gc-workload-name">{gc.name}</span>
+                    <span className="gc-workload-count">{gc.count} sellers</span>
+                  </div>
+                  <div className="progress-bar-bg">
+                    <div className="progress-bar-fill" style={{ width: `${pct}%` }}></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right: GM Pods Breakdown */}
+        <div className="panel">
+          <div className="panel-title">
+            <span>Growth Manager Pods</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {stats.sortedGMs.map(gm => {
+              const isSelected = selectedGM === gm.name;
+              return (
+                <div
+                  key={gm.name}
+                  onClick={() => setSelectedGM(selectedGM === gm.name ? '' : gm.name)}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    background: isSelected ? 'rgba(139, 92, 246, 0.2)' : 'rgba(15, 23, 42, 0.6)',
+                    border: isSelected ? '1px solid var(--secondary)' : '1px solid var(--border-subtle)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#ffffff' }}>{gm.name}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Team Lead</div>
+                  </div>
+                  <span className="badge" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd' }}>
+                    {gm.count}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Main Filter & Data Table */}
+      <section className="panel" style={{ padding: '20px' }}>
+        <div className="filter-bar">
+          <div className="search-input-wrapper">
+            <Search size={16} className="search-icon" />
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search by Seller Name, Seller ID, GC, GM, or Group ID..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
+            />
+          </div>
+
+          <select
+            className="select-filter"
+            value={selectedGC}
+            onChange={(e) => {
+              setSelectedGC(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Growth Consultants ({gcs.length})</option>
+            {gcs.map(gc => <option key={gc} value={gc}>{gc}</option>)}
+          </select>
+
+          <select
+            className="select-filter"
+            value={selectedGM}
+            onChange={(e) => {
+              setSelectedGM(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Growth Managers ({gms.length})</option>
+            {gms.map(gm => <option key={gm} value={gm}>{gm}</option>)}
+          </select>
+
+          <select
+            className="select-filter"
+            value={selectedKAM}
+            onChange={(e) => {
+              setSelectedKAM(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All KAMs ({kams.length})</option>
+            {kams.map(kam => <option key={kam} value={kam}>{kam}</option>)}
+          </select>
+
+          {(searchTerm || selectedGC || selectedGM || selectedKAM) && (
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedGC('');
+                setSelectedGM('');
+                setSelectedKAM('');
+                setCurrentPage(1);
+              }}
+              className="btn btn-outline"
+              style={{ padding: '8px 12px', fontSize: '12px' }}
+            >
+              Reset Filters
+            </button>
+          )}
+        </div>
+
+        {/* Quick GC Filter Pills */}
+        <div className="quick-pills">
+          <span style={{ fontSize: '12px', color: 'var(--text-dim)', alignSelf: 'center', marginRight: '4px' }}>
+            Quick Filter:
+          </span>
+          <button
+            className={`pill-btn ${!selectedGC ? 'active' : ''}`}
+            onClick={() => setSelectedGC('')}
+          >
+            All GCs
+          </button>
+          {stats.topGCs.map(gc => (
+            <button
+              key={gc.name}
+              className={`pill-btn ${selectedGC === gc.name ? 'active' : ''}`}
+              onClick={() => setSelectedGC(selectedGC === gc.name ? '' : gc.name)}
+            >
+              {gc.name} ({gc.count})
+            </button>
+          ))}
+        </div>
+
+        {/* Data Table */}
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Seller Details</th>
+                <th>Seller ID</th>
+                <th>Growth Consultant (GC)</th>
+                <th>Growth Manager (GM)</th>
+                <th>Key Account Manager</th>
+                <th>WhatsApp Group</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>
+                    No mapping records found matching your filters.
+                  </td>
+                </tr>
+              ) : (
+                paginatedRecords.map((item, idx) => (
+                  <tr key={`${item.seller_id}-${idx}`}>
+                    <td>
+                      <div className="seller-name">
+                        <Building2 size={16} color="#818cf8" />
+                        <span>{item.seller_name || 'Unnamed Seller'}</span>
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <code style={{ fontSize: '11px', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>
+                          {item.seller_id ? `${item.seller_id.slice(0, 8)}...` : 'N/A'}
+                        </code>
+                        {item.seller_id && (
+                          <button
+                            className="copy-btn"
+                            title="Copy full Seller ID"
+                            onClick={() => handleCopy(item.seller_id, `seller-${item.seller_id}`)}
+                          >
+                            {copiedId === `seller-${item.seller_id}` ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span
+                          className="gc-badge"
+                          title="Click to view GC portfolio"
+                          onClick={() => inspectGC(item.gc_name)}
+                        >
+                          <UserCheck size={12} />
+                          <span>{item.gc_name || 'Unassigned'}</span>
+                        </span>
+                        {item.gc_email && (
+                          <a
+                            href={`mailto:${item.gc_email}`}
+                            style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', marginLeft: '4px' }}
+                          >
+                            {item.gc_email}
+                          </a>
+                        )}
+                      </div>
+                    </td>
+
+                    <td>
+                      <span style={{ fontSize: '13px', color: '#e2e8f0' }}>
+                        {item.gm_name || '—'}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span style={{ fontSize: '13px', color: item.kam_name ? '#cbd5e1' : 'var(--text-dim)' }}>
+                        {item.kam_name || '—'}
+                      </span>
+                    </td>
+
+                    <td>
+                      {item.group_id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '11px', color: '#38bdf8' }}>
+                            <MessageCircle size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '3px' }} />
+                            {item.group_id.split('@')[0]}
+                          </span>
+                          <button
+                            className="copy-btn"
+                            title="Copy Group ID"
+                            onClick={() => handleCopy(item.group_id, `group-${item.group_id}`)}
+                          >
+                            {copiedId === `group-${item.group_id}` ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--text-dim)' }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Footer */}
+        <div className="pagination">
+          <div>
+            Showing {filteredRecords.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{' '}
+            {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} mapped records
+          </div>
+
+          <div className="page-controls">
+            <button
+              className="page-btn"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <span style={{ padding: '6px 12px', fontSize: '12px' }}>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              className="page-btn"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* GC Detail Modal */}
+      {selectedGCDetails && (
+        <div className="modal-overlay" onClick={() => setSelectedGCDetails(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#ffffff' }}>
+                  {selectedGCDetails.name}
+                </h3>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Growth Consultant Portfolio Overview
+                </p>
+              </div>
+              <button className="modal-close-btn" onClick={() => setSelectedGCDetails(null)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>TOTAL SELLERS</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--primary-light)' }}>
+                    {selectedGCDetails.sellers.length}
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>GROWTH MANAGER</div>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#ffffff' }}>
+                    {selectedGCDetails.gm_name}
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>EMAIL ADDRESS</div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', wordBreak: 'break-all' }}>
+                    {selectedGCDetails.email}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#ffffff' }}>
+                  Mapped Seller Accounts ({selectedGCDetails.sellers.length})
+                </h4>
+                <button
+                  className="btn btn-primary"
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                  onClick={() => {
+                    setSelectedGC(selectedGCDetails.name);
+                    setSelectedGCDetails(null);
+                    setCurrentPage(1);
+                  }}
+                >
+                  Filter Main Table
+                </button>
+              </div>
+
+              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid var(--border-subtle)', borderRadius: '10px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <tbody>
+                    {selectedGCDetails.sellers.map((s, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td style={{ padding: '8px 12px', fontWeight: 600, color: '#ffffff' }}>
+                          {s.seller_name || 'Unnamed'}
+                        </td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                          {s.seller_id}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SQL Modal */}
+      {showSqlModal && (
+        <div className="modal-overlay" onClick={() => setShowSqlModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#ffffff' }}>
+                  Metabase Optimized Query Architecture
+                </h3>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Designed specifically to prevent memory limits and query timeouts
+                </p>
+              </div>
+              <button className="modal-close-btn" onClick={() => setShowSqlModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ fontSize: '13px', color: '#cbd5e1' }}>
+              <p style={{ marginBottom: '12px' }}>
+                To comply with strict Metabase dataset constraints and BigQuery execution limits, the mapping data uses selected projection fields and filtered conditions:
+              </p>
+
+              <div style={{ background: '#020617', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', overflowX: 'auto', marginBottom: '16px' }}>
+                {`SELECT 
+  COALESCE(seller_id, '') AS seller_id,
+  COALESCE(group_id, '') AS group_id,
+  COALESCE(seller_name, '') AS seller_name,
+  COALESCE(NULLIF(TRIM(gc_name), '#N/A'), 'Unassigned') AS gc_name,
+  COALESCE(NULLIF(TRIM(gc_email), '#N/A'), '') AS gc_email,
+  COALESCE(NULLIF(TRIM(gm_name), '#N/A'), '') AS gm_name,
+  COALESCE(NULLIF(TRIM(kam_name), '#N/A'), '') AS kam_name
+FROM \`manual_file_uploads\`.\`hits_seller_gc_mapping\`
+WHERE gc_name IS NOT NULL AND TRIM(gc_name) != ''
+ORDER BY gc_name, seller_name;`}
+              </div>
+
+              <h4 style={{ fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>Key Optimizations:</h4>
+              <ul style={{ paddingLeft: '20px', lineHeight: 1.8 }}>
+                <li><b>Explicit Projections:</b> Omits unindexed columns, avoiding table full-scans.</li>
+                <li><b>Null & #N/A Sanitization:</b> Trims and cleans placeholder entries directly in the database.</li>
+                <li><b>Bi-Directional Mirroring:</b> Pre-loaded into Supabase Cloud PostgreSQL for zero-latency instant rendering.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
