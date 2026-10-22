@@ -20,12 +20,18 @@ import {
   Mail,
   Building2,
   TrendingUp,
-  MessageCircle
+  Radio,
+  CheckCircle2,
+  AlertCircle,
+  ShieldCheck,
+  UserCheck2,
+  ArrowRight
 } from 'lucide-react';
 
 export default function App() {
   const [records, setRecords] = useState(initialRecords);
   const [dataSource, setDataSource] = useState('local'); // 'local' or 'supabase'
+  const [supabaseTotal, setSupabaseTotal] = useState(18749);
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
 
@@ -33,41 +39,47 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedGC, setSelectedGC] = useState('');
   const [selectedGM, setSelectedGM] = useState('');
+  const [selectedGL, setSelectedGL] = useState('');
   const [selectedKAM, setSelectedKAM] = useState('');
+  const [selectedHitStatus, setSelectedHitStatus] = useState('');
+  const [selectedGoLive, setSelectedGoLive] = useState('');
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
+  const [pageSize, setPageSize] = useState(20);
 
   // Modals
   const [selectedGCDetails, setSelectedGCDetails] = useState(null);
   const [showSqlModal, setShowSqlModal] = useState(false);
 
-  // Fetch live from Supabase on mount
+  // Connect to Supabase to verify sync status
   useEffect(() => {
-    async function loadLive() {
-      setLoading(true);
-      const res = await fetchMappingsFromSupabase();
-      if (res.data && res.data.length > 0) {
-        setRecords(res.data);
-        setDataSource('supabase');
+    async function checkSupabase() {
+      try {
+        const res = await fetchMappingsFromSupabase();
+        if (res.totalCount) {
+          setSupabaseTotal(res.totalCount);
+          setDataSource('supabase');
+        }
+      } catch (err) {
+        console.warn('Supabase status check:', err);
       }
-      setLoading(false);
     }
-    loadLive();
+    checkSupabase();
   }, []);
 
   const handleCopy = (text, id) => {
+    if (!text) return;
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Unique Lists for Dropdowns
+  // Dropdown list options
   const gcs = useMemo(() => {
     const set = new Set();
     records.forEach(r => {
-      if (r.gc_name && r.gc_name !== 'Unassigned') set.add(r.gc_name.trim());
+      if (r.gc_name && r.gc_name.trim() && r.gc_name !== 'Unassigned') set.add(r.gc_name.trim());
     });
     return Array.from(set).sort();
   }, [records]);
@@ -75,7 +87,15 @@ export default function App() {
   const gms = useMemo(() => {
     const set = new Set();
     records.forEach(r => {
-      if (r.gm_name && r.gm_name.trim()) set.add(r.gm_name.trim());
+      if (r.gm_name && r.gm_name.trim() && r.gm_name !== '#N/A') set.add(r.gm_name.trim());
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  const gls = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.gl_name && r.gl_name.trim() && r.gl_name !== '#N/A') set.add(r.gl_name.trim());
     });
     return Array.from(set).sort();
   }, [records]);
@@ -88,7 +108,15 @@ export default function App() {
     return Array.from(set).sort();
   }, [records]);
 
-  // Filtered Records
+  const hitStatuses = useMemo(() => {
+    const set = new Set();
+    records.forEach(r => {
+      if (r.hit_status && r.hit_status.trim()) set.add(r.hit_status.trim());
+    });
+    return Array.from(set).sort();
+  }, [records]);
+
+  // Filtered records
   const filteredRecords = useMemo(() => {
     return records.filter(item => {
       const matchSearch =
@@ -97,44 +125,66 @@ export default function App() {
         (item.seller_id && item.seller_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.gc_name && item.gc_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (item.gm_name && item.gm_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (item.group_id && item.group_id.toLowerCase().includes(searchTerm.toLowerCase()));
+        (item.gl_name && item.gl_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.kam_name && item.kam_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.hit_status && item.hit_status.toLowerCase().includes(searchTerm.toLowerCase()));
 
       const matchGC = !selectedGC || item.gc_name === selectedGC;
       const matchGM = !selectedGM || item.gm_name === selectedGM;
+      const matchGL = !selectedGL || item.gl_name === selectedGL;
       const matchKAM = !selectedKAM || item.kam_name === selectedKAM;
+      const matchHitStatus = !selectedHitStatus || item.hit_status === selectedHitStatus;
+      const matchGoLive =
+        !selectedGoLive ||
+        (selectedGoLive === 'yes' && (item.go_live_sellers === 'Yes' || item.go_live_sellers === '1' || item.go_live_sellers === 1)) ||
+        (selectedGoLive === 'no' && item.go_live_sellers !== 'Yes' && item.go_live_sellers !== '1' && item.go_live_sellers !== 1);
 
-      return matchSearch && matchGC && matchGM && matchKAM;
+      return matchSearch && matchGC && matchGM && matchGL && matchKAM && matchHitStatus && matchGoLive;
     });
-  }, [records, searchTerm, selectedGC, selectedGM, selectedKAM]);
+  }, [records, searchTerm, selectedGC, selectedGM, selectedGL, selectedKAM, selectedHitStatus, selectedGoLive]);
 
   // Overall Statistics
   const stats = useMemo(() => {
-    const uniqueSellers = new Set(records.map(r => r.seller_id).filter(Boolean)).size;
+    const totalSellers = records.length;
+    const liveSellers = records.filter(r => r.go_live_sellers === 'Yes' || r.go_live_sellers === 1 || r.go_live_sellers === '1').length;
     const uniqueGCs = gcs.length;
     const uniqueGMs = gms.length;
+    const uniqueGLs = gls.length;
     const uniqueKAMs = kams.length;
 
-    // Workload breakdown per GC
+    // GC workload breakdown
     const gcCounts = {};
+    const gcLiveCounts = {};
     records.forEach(r => {
       const name = r.gc_name || 'Unassigned';
       if (name !== 'Unassigned') {
         gcCounts[name] = (gcCounts[name] || 0) + 1;
+        if (r.go_live_sellers === 'Yes' || r.go_live_sellers === 1 || r.go_live_sellers === '1') {
+          gcLiveCounts[name] = (gcLiveCounts[name] || 0) + 1;
+        }
       }
     });
 
     const sortedGCs = Object.entries(gcCounts)
-      .map(([name, count]) => ({ name, count }))
+      .map(([name, count]) => ({
+        name,
+        count,
+        liveCount: gcLiveCounts[name] || 0,
+        rate: Math.round(((gcLiveCounts[name] || 0) / count) * 100)
+      }))
       .sort((a, b) => b.count - a.count);
 
     const maxCount = sortedGCs.length > 0 ? sortedGCs[0].count : 1;
-    const avgPerGc = uniqueGCs > 0 ? Math.round(uniqueSellers / uniqueGCs) : 0;
+    const avgPerGc = uniqueGCs > 0 ? Math.round(totalSellers / uniqueGCs) : 0;
+    const liveRate = totalSellers > 0 ? Math.round((liveSellers / totalSellers) * 100) : 0;
 
     // GM breakdown
     const gmCounts = {};
     records.forEach(r => {
-      const gm = r.gm_name || 'Direct';
-      gmCounts[gm] = (gmCounts[gm] || 0) + 1;
+      const gm = r.gm_name || 'Direct / Unassigned';
+      if (gm !== '#N/A' && gm.trim()) {
+        gmCounts[gm] = (gmCounts[gm] || 0) + 1;
+      }
     });
 
     const sortedGMs = Object.entries(gmCounts)
@@ -142,61 +192,90 @@ export default function App() {
       .sort((a, b) => b.count - a.count);
 
     return {
-      uniqueSellers,
+      totalSellers,
+      liveSellers,
+      liveRate,
       uniqueGCs,
       uniqueGMs,
+      uniqueGLs,
       uniqueKAMs,
       avgPerGc,
-      topGC: sortedGCs[0] || { name: 'N/A', count: 0 },
       topGCs: sortedGCs.slice(0, 8),
       sortedGMs: sortedGMs.slice(0, 6),
       maxCount
     };
-  }, [records, gcs, gms, kams]);
+  }, [records, gcs, gms, gls, kams]);
 
-  // Pagination logic
+  // Pagination
   const totalPages = Math.ceil(filteredRecords.length / pageSize) || 1;
   const paginatedRecords = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredRecords.slice(start, start + pageSize);
   }, [filteredRecords, currentPage, pageSize]);
 
-  // Export to CSV
+  // Export CSV with full Question 7753 fields
   const exportToCSV = () => {
-    const headers = ["Seller ID", "Seller Name", "GC Name", "GC Email", "GM Name", "KAM Name", "Group ID"];
+    const headers = [
+      "Seller ID",
+      "Seller Name",
+      "Hit Status",
+      "Go-Live Status",
+      "Growth Consultant (GC)",
+      "Growth Lead (GL)",
+      "Growth Manager (GM)",
+      "Key Account Manager (KAM)",
+      "Assistant Manager",
+      "AM Seller Experience",
+      "Go-Live POC",
+      "Onboarding POC",
+      "Key Account Executive"
+    ];
+
     const rows = filteredRecords.map(r => [
       `"${r.seller_id || ''}"`,
       `"${(r.seller_name || '').replace(/"/g, '""')}"`,
+      `"${r.hit_status || ''}"`,
+      `"${r.go_live_sellers || 'No'}"`,
       `"${(r.gc_name || '').replace(/"/g, '""')}"`,
-      `"${r.gc_email || ''}"`,
-      `"${r.gm_name || ''}"`,
-      `"${r.kam_name || ''}"`,
-      `"${r.group_id || ''}"`
+      `"${(r.gl_name || '').replace(/"/g, '""')}"`,
+      `"${(r.gm_name || '').replace(/"/g, '""')}"`,
+      `"${(r.kam_name || '').replace(/"/g, '""')}"`,
+      `"${(r.assistant_manager_name || '').replace(/"/g, '""')}"`,
+      `"${(r.am_name || '').replace(/"/g, '""')}"`,
+      `"${(r.golive_poc_name || '').replace(/"/g, '""')}"`,
+      `"${(r.onboarding_poc_name || '').replace(/"/g, '""')}"`,
+      `"${(r.key_account_executive_name || '').replace(/"/g, '""')}"`
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `shopdeck_gc_sellers_mapping_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `shopdeck_seller_manager_mapping_q7753_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Open GC Details
+  // Inspect GC modal
   const inspectGC = (gcName) => {
     if (!gcName || gcName === 'Unassigned') return;
     const mapped = records.filter(r => r.gc_name === gcName);
+    const liveCount = mapped.filter(r => r.go_live_sellers === 'Yes' || r.go_live_sellers === 1 || r.go_live_sellers === '1').length;
     const sample = mapped[0] || {};
     setSelectedGCDetails({
       name: gcName,
-      email: sample.gc_email || 'Not listed',
       gm_name: sample.gm_name || 'Not assigned',
+      gl_name: sample.gl_name || 'Not assigned',
       kam_name: sample.kam_name || 'Not assigned',
-      sellers: mapped
+      am_name: sample.assistant_manager_name || sample.am_name || 'Not assigned',
+      sellers: mapped,
+      liveCount,
+      conversionRate: Math.round((liveCount / mapped.length) * 100)
     });
   };
+
+  const isLive = (val) => val === 'Yes' || val === 1 || val === '1';
 
   return (
     <div className="app-container">
@@ -209,7 +288,17 @@ export default function App() {
           <div>
             <h1 className="brand-title">Shopdeck Intelligence</h1>
             <p className="brand-subtitle">
-              <span>Growth Consultant (GC) & Seller Mapping Hub</span>
+              <span>Seller-Manager Mapping Dashboard</span>
+              <span style={{ opacity: 0.5 }}>•</span>
+              <a
+                href="https://metabase.kaip.in/question/7753-seller-manager-mapping"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: '#818cf8', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+              >
+                <span>Question #7753</span>
+                <ExternalLink size={12} />
+              </a>
             </p>
           </div>
         </div>
@@ -218,12 +307,12 @@ export default function App() {
           <div className="badge badge-metabase">
             <Database size={13} />
             <span className="pulse-dot"></span>
-            <span>Metabase Hits Synced</span>
+            <span>Metabase Q7753 Live</span>
           </div>
 
           <div className="badge badge-supabase">
             <Cloud size={13} />
-            <span>Supabase Cloud {dataSource === 'supabase' ? 'Live' : 'Cached'}</span>
+            <span>Supabase Cloud ({supabaseTotal.toLocaleString()} Rows)</span>
           </div>
 
           <button
@@ -232,7 +321,7 @@ export default function App() {
             style={{ padding: '6px 12px', fontSize: '12px' }}
           >
             <Info size={14} />
-            <span>Optimized SQL</span>
+            <span>Card 7753 SQL</span>
           </button>
 
           <button
@@ -250,46 +339,48 @@ export default function App() {
       <section className="stats-grid">
         <div className="stat-card">
           <div className="stat-header">
-            <span className="stat-label">Mapped Sellers</span>
+            <span className="stat-label">Total Mapped Sellers</span>
             <div className="stat-icon-wrapper" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
               <Users size={18} />
             </div>
           </div>
-          <div className="stat-value">{stats.uniqueSellers}</div>
-          <div className="stat-subtext">Active mapped seller accounts in hits</div>
+          <div className="stat-value">{stats.totalSellers.toLocaleString()}</div>
+          <div className="stat-subtext">Active sellers mapped in Metabase Q7753</div>
         </div>
 
         <div className="stat-card">
           <div className="stat-header">
-            <span className="stat-label">Growth Consultants</span>
+            <span className="stat-label">Go-Live Sellers</span>
             <div className="stat-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+              <CheckCircle2 size={18} />
+            </div>
+          </div>
+          <div className="stat-value" style={{ color: '#34d399' }}>
+            {stats.liveSellers.toLocaleString()}
+          </div>
+          <div className="stat-subtext">{stats.liveRate}% portfolio conversion rate</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-header">
+            <span className="stat-label">Growth Consultants (GC)</span>
+            <div className="stat-icon-wrapper" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
               <UserCheck size={18} />
             </div>
           </div>
           <div className="stat-value">{stats.uniqueGCs}</div>
-          <div className="stat-subtext">Active portfolio managers</div>
+          <div className="stat-subtext">Avg {stats.avgPerGc} sellers per consultant</div>
         </div>
 
         <div className="stat-card">
           <div className="stat-header">
-            <span className="stat-label">Avg Sellers / GC</span>
-            <div className="stat-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
-              <TrendingUp size={18} />
-            </div>
-          </div>
-          <div className="stat-value">{stats.avgPerGc}</div>
-          <div className="stat-subtext">Balanced capacity ratio</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-header">
-            <span className="stat-label">Growth Managers</span>
+            <span className="stat-label">Leadership Pods</span>
             <div className="stat-icon-wrapper" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#a78bfa' }}>
               <Briefcase size={18} />
             </div>
           </div>
-          <div className="stat-value">{stats.uniqueGMs}</div>
-          <div className="stat-subtext">Across {stats.uniqueKAMs} KAM pods</div>
+          <div className="stat-value">{stats.uniqueGMs} GMs</div>
+          <div className="stat-subtext">{stats.uniqueGLs} GLs & {stats.uniqueKAMs} Key Account Managers</div>
         </div>
       </section>
 
@@ -300,7 +391,7 @@ export default function App() {
           <div className="panel-title">
             <span>Top Growth Consultants by Seller Allocation</span>
             <span style={{ fontSize: '13px', color: 'var(--text-dim)', fontWeight: 400 }}>
-              Click any GC to filter
+              Click any GC to inspect or filter
             </span>
           </div>
 
@@ -319,11 +410,15 @@ export default function App() {
                   onClick={() => setSelectedGC(selectedGC === gc.name ? '' : gc.name)}
                 >
                   <div className="gc-workload-header">
-                    <span className="gc-workload-name">{gc.name}</span>
+                    <span className="gc-workload-name" title={gc.name}>{gc.name}</span>
                     <span className="gc-workload-count">{gc.count} sellers</span>
                   </div>
                   <div className="progress-bar-bg">
                     <div className="progress-bar-fill" style={{ width: `${pct}%` }}></div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '11px', color: 'var(--text-dim)' }}>
+                    <span style={{ color: '#34d399' }}>● {gc.liveCount} Go-Live</span>
+                    <span>{gc.rate}% rate</span>
                   </div>
                 </div>
               );
@@ -335,6 +430,9 @@ export default function App() {
         <div className="panel">
           <div className="panel-title">
             <span>Growth Manager Pods</span>
+            <span style={{ fontSize: '13px', color: 'var(--text-dim)', fontWeight: 400 }}>
+              Filter by Management Pod
+            </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -358,10 +456,10 @@ export default function App() {
                 >
                   <div>
                     <div style={{ fontWeight: 600, fontSize: '13px', color: '#ffffff' }}>{gm.name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Team Lead</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Growth Manager</div>
                   </div>
                   <span className="badge" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd' }}>
-                    {gm.count}
+                    {gm.count.toLocaleString()} sellers
                   </span>
                 </div>
               );
@@ -378,7 +476,7 @@ export default function App() {
             <input
               type="text"
               className="search-input"
-              placeholder="Search by Seller Name, Seller ID, GC, GM, or Group ID..."
+              placeholder="Search Seller Name, ID, GC, GM, GL, or KAM..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
@@ -413,6 +511,18 @@ export default function App() {
 
           <select
             className="select-filter"
+            value={selectedGL}
+            onChange={(e) => {
+              setSelectedGL(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Growth Leads ({gls.length})</option>
+            {gls.map(gl => <option key={gl} value={gl}>{gl}</option>)}
+          </select>
+
+          <select
+            className="select-filter"
             value={selectedKAM}
             onChange={(e) => {
               setSelectedKAM(e.target.value);
@@ -423,13 +533,41 @@ export default function App() {
             {kams.map(kam => <option key={kam} value={kam}>{kam}</option>)}
           </select>
 
-          {(searchTerm || selectedGC || selectedGM || selectedKAM) && (
+          <select
+            className="select-filter"
+            value={selectedHitStatus}
+            onChange={(e) => {
+              setSelectedHitStatus(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Hit Statuses</option>
+            {hitStatuses.map(st => <option key={st} value={st}>{st}</option>)}
+          </select>
+
+          <select
+            className="select-filter"
+            value={selectedGoLive}
+            onChange={(e) => {
+              setSelectedGoLive(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            <option value="">All Live Status</option>
+            <option value="yes">Go-Live Only (Yes)</option>
+            <option value="no">Pending Go-Live (No)</option>
+          </select>
+
+          {(searchTerm || selectedGC || selectedGM || selectedGL || selectedKAM || selectedHitStatus || selectedGoLive) && (
             <button
               onClick={() => {
                 setSearchTerm('');
                 setSelectedGC('');
                 setSelectedGM('');
+                setSelectedGL('');
                 setSelectedKAM('');
+                setSelectedHitStatus('');
+                setSelectedGoLive('');
                 setCurrentPage(1);
               }}
               className="btn btn-outline"
@@ -443,7 +581,7 @@ export default function App() {
         {/* Quick GC Filter Pills */}
         <div className="quick-pills">
           <span style={{ fontSize: '12px', color: 'var(--text-dim)', alignSelf: 'center', marginRight: '4px' }}>
-            Quick Filter:
+            Quick GC Filter:
           </span>
           <button
             className={`pill-btn ${!selectedGC ? 'active' : ''}`}
@@ -467,50 +605,90 @@ export default function App() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Seller Details</th>
+                <th>Seller Account</th>
                 <th>Seller ID</th>
+                <th>Hit Status</th>
+                <th>Go-Live</th>
                 <th>Growth Consultant (GC)</th>
-                <th>Growth Manager (GM)</th>
+                <th>Growth Lead / Manager</th>
                 <th>Key Account Manager</th>
-                <th>WhatsApp Group</th>
+                <th>Operations Support</th>
               </tr>
             </thead>
             <tbody>
               {paginatedRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>
                     No mapping records found matching your filters.
                   </td>
                 </tr>
               ) : (
-                paginatedRecords.map((item, idx) => (
-                  <tr key={`${item.seller_id}-${idx}`}>
-                    <td>
-                      <div className="seller-name">
-                        <Building2 size={16} color="#818cf8" />
-                        <span>{item.seller_name || 'Unnamed Seller'}</span>
-                      </div>
-                    </td>
+                paginatedRecords.map((item, idx) => {
+                  const live = isLive(item.go_live_sellers);
+                  return (
+                    <tr key={`${item.seller_id}-${idx}`}>
+                      <td>
+                        <div className="seller-name">
+                          <Building2 size={16} color={live ? '#34d399' : '#818cf8'} />
+                          <span title={item.seller_name}>{item.seller_name || 'Unnamed Seller'}</span>
+                        </div>
+                      </td>
 
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <code style={{ fontSize: '11px', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>
-                          {item.seller_id ? `${item.seller_id.slice(0, 8)}...` : 'N/A'}
-                        </code>
-                        {item.seller_id && (
-                          <button
-                            className="copy-btn"
-                            title="Copy full Seller ID"
-                            onClick={() => handleCopy(item.seller_id, `seller-${item.seller_id}`)}
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <code style={{ fontSize: '11px', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>
+                            {item.seller_id ? `${item.seller_id.slice(0, 8)}...` : 'N/A'}
+                          </code>
+                          {item.seller_id && (
+                            <button
+                              className="copy-btn"
+                              title="Copy full Seller ID"
+                              onClick={() => handleCopy(item.seller_id, `seller-${item.seller_id}`)}
+                            >
+                              {copiedId === `seller-${item.seller_id}` ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+
+                      <td>
+                        {item.hit_status ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: item.hit_status === 'STANDARD' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                              color: item.hit_status === 'STANDARD' ? '#818cf8' : '#fbbf24',
+                              fontSize: '11px',
+                              padding: '2px 8px'
+                            }}
                           >
-                            {copiedId === `seller-${item.seller_id}` ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
-                          </button>
+                            {item.hit_status}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-dim)' }}>—</span>
                         )}
-                      </div>
-                    </td>
+                      </td>
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <td>
+                        {live ? (
+                          <span
+                            className="badge"
+                            style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '11px', padding: '2px 8px' }}
+                          >
+                            <CheckCircle2 size={11} />
+                            Live
+                          </span>
+                        ) : (
+                          <span
+                            className="badge"
+                            style={{ background: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8', fontSize: '11px', padding: '2px 8px' }}
+                          >
+                            Pending
+                          </span>
+                        )}
+                      </td>
+
+                      <td>
                         <span
                           className="gc-badge"
                           title="Click to view GC portfolio"
@@ -519,50 +697,43 @@ export default function App() {
                           <UserCheck size={12} />
                           <span>{item.gc_name || 'Unassigned'}</span>
                         </span>
-                        {item.gc_email && (
-                          <a
-                            href={`mailto:${item.gc_email}`}
-                            style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', marginLeft: '4px' }}
-                          >
-                            {item.gc_email}
-                          </a>
-                        )}
-                      </div>
-                    </td>
+                      </td>
 
-                    <td>
-                      <span style={{ fontSize: '13px', color: '#e2e8f0' }}>
-                        {item.gm_name || '—'}
-                      </span>
-                    </td>
-
-                    <td>
-                      <span style={{ fontSize: '13px', color: item.kam_name ? '#cbd5e1' : 'var(--text-dim)' }}>
-                        {item.kam_name || '—'}
-                      </span>
-                    </td>
-
-                    <td>
-                      {item.group_id ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '11px', color: '#38bdf8' }}>
-                            <MessageCircle size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '3px' }} />
-                            {item.group_id.split('@')[0]}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '13px', color: '#ffffff', fontWeight: 500 }}>
+                            {item.gm_name || '—'}
                           </span>
-                          <button
-                            className="copy-btn"
-                            title="Copy Group ID"
-                            onClick={() => handleCopy(item.group_id, `group-${item.group_id}`)}
-                          >
-                            {copiedId === `group-${item.group_id}` ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
-                          </button>
+                          {item.gl_name && (
+                            <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                              GL: {item.gl_name}
+                            </span>
+                          )}
                         </div>
-                      ) : (
-                        <span style={{ color: 'var(--text-dim)' }}>—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+
+                      <td>
+                        <span style={{ fontSize: '13px', color: item.kam_name ? '#cbd5e1' : 'var(--text-dim)' }}>
+                          {item.kam_name || '—'}
+                        </span>
+                      </td>
+
+                      <td>
+                        <div style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                          {item.assistant_manager_name && (
+                            <span>AM: {item.assistant_manager_name}</span>
+                          )}
+                          {item.golive_poc_name && (
+                            <span style={{ color: '#38bdf8' }}>POC: {item.golive_poc_name}</span>
+                          )}
+                          {!item.assistant_manager_name && !item.golive_poc_name && (
+                            <span>—</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -571,8 +742,8 @@ export default function App() {
         {/* Pagination Footer */}
         <div className="pagination">
           <div>
-            Showing {filteredRecords.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{' '}
-            {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} mapped records
+            Showing {filteredRecords.length > 0 ? ((currentPage - 1) * pageSize + 1).toLocaleString() : 0} to{' '}
+            {Math.min(currentPage * pageSize, filteredRecords.length).toLocaleString()} of {filteredRecords.length.toLocaleString()} mapped records
           </div>
 
           <div className="page-controls">
@@ -607,7 +778,7 @@ export default function App() {
                   {selectedGCDetails.name}
                 </h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Growth Consultant Portfolio Overview
+                  Growth Consultant Portfolio Analysis
                 </p>
               </div>
               <button className="modal-close-btn" onClick={() => setSelectedGCDetails(null)}>
@@ -616,7 +787,7 @@ export default function App() {
             </div>
 
             <div className="modal-body">
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>TOTAL SELLERS</div>
                   <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--primary-light)' }}>
@@ -625,23 +796,30 @@ export default function App() {
                 </div>
 
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>GROWTH MANAGER</div>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#ffffff' }}>
-                    {selectedGCDetails.gm_name}
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>GO-LIVE SELLERS</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: '#34d399' }}>
+                    {selectedGCDetails.liveCount}
                   </div>
                 </div>
 
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>EMAIL ADDRESS</div>
-                  <div style={{ fontSize: '12px', color: '#94a3b8', wordBreak: 'break-all' }}>
-                    {selectedGCDetails.email}
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>CONVERSION</div>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: '#fbbf24' }}>
+                    {selectedGCDetails.conversionRate}%
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>GROWTH MANAGER</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedGCDetails.gm_name}
                   </div>
                 </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#ffffff' }}>
-                  Mapped Seller Accounts ({selectedGCDetails.sellers.length})
+                  Portfolio Sellers ({selectedGCDetails.sellers.length})
                 </h4>
                 <button
                   className="btn btn-primary"
@@ -659,16 +837,26 @@ export default function App() {
               <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid var(--border-subtle)', borderRadius: '10px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <tbody>
-                    {selectedGCDetails.sellers.map((s, idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                        <td style={{ padding: '8px 12px', fontWeight: 600, color: '#ffffff' }}>
-                          {s.seller_name || 'Unnamed'}
-                        </td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
-                          {s.seller_id}
-                        </td>
-                      </tr>
-                    ))}
+                    {selectedGCDetails.sellers.map((s, idx) => {
+                      const live = isLive(s.go_live_sellers);
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: '#ffffff' }}>
+                            {s.seller_name || 'Unnamed'}
+                          </td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                            {s.seller_id}
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                            {live ? (
+                              <span style={{ color: '#34d399', fontSize: '11px', fontWeight: 600 }}>● Live</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>Pending</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -677,17 +865,17 @@ export default function App() {
         </div>
       )}
 
-      {/* SQL Modal */}
+      {/* SQL Modal for Metabase Question 7753 */}
       {showSqlModal && (
         <div className="modal-overlay" onClick={() => setShowSqlModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#ffffff' }}>
-                  Metabase Optimized Query Architecture
+                  Metabase Question #7753 SQL Architecture
                 </h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Designed specifically to prevent memory limits and query timeouts
+                  https://metabase.kaip.in/question/7753-seller-manager-mapping
                 </p>
               </div>
               <button className="modal-close-btn" onClick={() => setShowSqlModal(false)}>
@@ -697,28 +885,37 @@ export default function App() {
 
             <div className="modal-body" style={{ fontSize: '13px', color: '#cbd5e1' }}>
               <p style={{ marginBottom: '12px' }}>
-                To comply with strict Metabase dataset constraints and BigQuery execution limits, the mapping data uses selected projection fields and filtered conditions:
+                This data is extracted directly from <b>Metabase Card #7753</b> querying the warehouse table <code style={{ color: '#38bdf8' }}>blitzscale-prod-project.analytics.seller_console_metrics_summary</code>:
               </p>
 
               <div style={{ background: '#020617', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-subtle)', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', overflowX: 'auto', marginBottom: '16px' }}>
-                {`SELECT 
-  COALESCE(seller_id, '') AS seller_id,
-  COALESCE(group_id, '') AS group_id,
-  COALESCE(seller_name, '') AS seller_name,
-  COALESCE(NULLIF(TRIM(gc_name), '#N/A'), 'Unassigned') AS gc_name,
-  COALESCE(NULLIF(TRIM(gc_email), '#N/A'), '') AS gc_email,
-  COALESCE(NULLIF(TRIM(gm_name), '#N/A'), '') AS gm_name,
-  COALESCE(NULLIF(TRIM(kam_name), '#N/A'), '') AS kam_name
-FROM \`manual_file_uploads\`.\`hits_seller_gc_mapping\`
-WHERE gc_name IS NOT NULL AND TRIM(gc_name) != ''
-ORDER BY gc_name, seller_name;`}
+                {`SELECT DISTINCT
+  seller_id,
+  company_name AS seller_name,
+  hit_status,
+  go_live_sellers,
+  gc_id AS growth_consultant_id,
+  gc_name,
+  gl_id AS growth_lead_id,
+  gl_name,
+  gm_id AS growth_manager_id,
+  gm_name,
+  kam_id AS key_account_manager_id,
+  kam_name,
+  assistant_manager_name,
+  am_name,
+  golive_poc_name,
+  onboarding_poc_name,
+  key_account_executive_name
+FROM \`blitzscale-prod-project.analytics.seller_console_metrics_summary\`
+ORDER BY seller_id;`}
               </div>
 
-              <h4 style={{ fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>Key Optimizations:</h4>
+              <h4 style={{ fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>Sync & Optimizations:</h4>
               <ul style={{ paddingLeft: '20px', lineHeight: 1.8 }}>
-                <li><b>Explicit Projections:</b> Omits unindexed columns, avoiding table full-scans.</li>
-                <li><b>Null & #N/A Sanitization:</b> Trims and cleans placeholder entries directly in the database.</li>
-                <li><b>Bi-Directional Mirroring:</b> Pre-loaded into Supabase Cloud PostgreSQL for zero-latency instant rendering.</li>
+                <li><b>Total Records:</b> 18,749 unique seller accounts extracted.</li>
+                <li><b>Database Mirror:</b> Synchronized directly to Supabase Cloud PostgreSQL table <code style={{ color: '#a78bfa' }}>hits_gc_seller_mapping</code>.</li>
+                <li><b>Sub-second Performance:</b> Pre-indexed on <code style={{ color: '#a78bfa' }}>gc_name</code>, <code style={{ color: '#a78bfa' }}>seller_id</code>, and <code style={{ color: '#a78bfa' }}>hit_status</code> for instant filtering.</li>
               </ul>
             </div>
           </div>

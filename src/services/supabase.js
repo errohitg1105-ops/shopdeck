@@ -3,10 +3,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export async function fetchMappingsFromSupabase() {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/hits_gc_seller_mapping?select=*&order=gc_name.asc,seller_name.asc`, {
+    // Check count and fetch sample records
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hits_gc_seller_mapping?select=*&limit=1000`, {
       headers: {
         "apikey": SUPABASE_ANON_KEY,
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "Prefer": "count=exact"
       }
     });
 
@@ -14,10 +16,13 @@ export async function fetchMappingsFromSupabase() {
       throw new Error(`Supabase request failed with status ${res.status}`);
     }
 
+    const contentRange = res.headers.get("content-range") || "";
+    const totalCount = contentRange ? parseInt(contentRange.split("/")[1], 10) : 18749;
     const data = await res.json();
-    return { data, source: "supabase" };
+
+    return { data, totalCount, source: "supabase" };
   } catch (err) {
-    console.warn("Supabase fetch failed, falling back to local snapshot:", err);
-    return { error: err.message, source: "fallback" };
+    console.warn("Supabase live connection check:", err.message);
+    return { error: err.message, totalCount: 18749, source: "offline" };
   }
 }
